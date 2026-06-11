@@ -1,0 +1,163 @@
+# Makefile for bookmark-common (Shared Library)
+# Structure: Y CHANG MONO - Same approach as bookmark-service-monolithic
+
+APP_NAME := bookmark-common
+BIN_DIR := ./bin
+COVERAGE_DIR ?= coverage_report
+COVERAGE_THRESHOLD ?= 80
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SINGLE SOURCE OF TRUTH: Coverage & Quality Gate Exclusions
+#
+# INFRA_DIRS: exclude from coverage % but SCAN for security
+INFRA_DIRS := pkg/common pkg/dbutils pkg/jwt/provider pkg/logger pkg/redis \
+              pkg/requestutils pkg/response pkg/security pkg/sqldb pkg/utils \
+              pkg/ratelimit/provider
+
+# SYSTEM_DIRS: no scan, no coverage
+SYSTEM_DIRS := vendor docs bin mocks
+SYSTEM_FILES := _test.go .pb.go test_helper.go mock.go
+
+# Format conversion for Makefile
+comma := ,
+space := $(subst ,, )
+
+# Pattern builders for Sonar (Ant-style glob)
+SONAR_INFRA_DIRS := $(foreach d,$(INFRA_DIRS),**/$(d)**)
+SONAR_SYSTEM_DIRS := $(foreach d,$(SYSTEM_DIRS),**/$(d)**)
+SONAR_SYSTEM_FILES := $(foreach f,$(SYSTEM_FILES),**/*$(f))
+
+# Sonar: exclude system artifacts completely
+SONAR_EXCLUDE_PATTERNS := $(subst $(space),$(comma),$(strip $(SONAR_SYSTEM_FILES) $(SONAR_SYSTEM_DIRS) $(COVERAGE_DIR)/**))
+
+# Sonar: exclude infrastructure from coverage % but allow security scan
+SONAR_INFRA_DIRS_FLAT := $(foreach d,$(INFRA_DIRS),**/$(d)**)
+SONAR_COVERAGE_EXCLUSIONS := $(subst $(space),$(comma),$(strip $(SONAR_INFRA_DIRS_FLAT) $(SONAR_SYSTEM_DIRS)))
+
+# Local/Docker: Regex format (coverage.out filtering)
+ALL_EXCLUDES := $(INFRA_DIRS) $(INFRA_FILES) $(SYSTEM_DIRS) $(SYSTEM_FILES)
+COVERAGE_EXCLUDE := $(subst $(space),|,$(strip $(ALL_EXCLUDES)))
+
+GO := go
+COVERPKG := ./...
+
+# Build cache
+CACHE_FROM ?= type=local,src=/tmp/.buildx-cache
+CACHE_TO ?= type=local,dest=/tmp/.buildx-cache-new,mode=max
+
+# Docker
+DOCKER_REGISTRY ?= docker.io
+DOCKER_NAMESPACE ?= huypham053
+DOCKER_IMAGE := $(DOCKER_REGISTRY)/$(DOCKER_NAMESPACE)/$(APP_NAME)
+
+.PHONY: help test test-coverage fmt vet lint tidy clean \
+        docker-test docker-sonar
+
+help:
+	@echo "bookmark-common - Shared Library"
+	@echo ""
+	@echo "Local Development:"
+	@echo "  make test          Run tests + coverage report (80% threshold)"
+	@echo "  make test-coverage Open coverage HTML"
+	@echo "  make fmt           Format code (go fmt)"
+	@echo "  make vet           Static analysis (go vet)"
+	@echo "  make lint          Run linter"
+	@echo "  make tidy          Tidy dependencies"
+	@echo ""
+	@echo "Docker / CI:"
+	@echo "  make docker-test   Test in Docker with coverage extraction"
+	@echo "  make docker-sonar  SonarCloud code quality scan"
+	@echo "  make clean         Remove artifacts"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LOCAL TESTING
+# ═══════════════════════════════════════════════════════════════════════════
+
+test:
+	@$(GO) clean -testcache
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test ./... -coverprofile=$(COVERAGE_DIR)/coverage.tmp -covermode=atomic -coverpkg=$(COVERPKG) -p 1
+	@head -1 $(COVERAGE_DIR)/coverage.tmp > $(COVERAGE_DIR)/coverage.out
+	@grep -vE "$(COVERAGE_EXCLUDE)" $(COVERAGE_DIR)/coverage.tmp | tail -n +2 >> $(COVERAGE_DIR)/coverage.out || true
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
+	@total=$$($(GO) tool cover -func=$(COVERAGE_DIR)/coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
+	echo "Coverage: $$total%"; \
+	if [ $$(echo "$$total < $(COVERAGE_THRESHOLD)" | bc -l) -eq 1 ]; then \
+		echo "FAIL: Below $(COVERAGE_THRESHOLD)% threshold"; exit 1; \
+	fi
+
+test-coverage: test
+	$(GO) tool cover -html=$(COVERAGE_DIR)/coverage.out
+
+fmt:
+	$(GO) fmt ./...
+	@echo "✓ Formatted"
+
+vet:
+	$(GO) vet ./...
+	@echo "✓ Vet passed"
+
+lint:
+	@which golangci-lint > /dev/null || (echo "Error: golangci-lint not found"; exit 1)
+	golangci-lint run ./...
+	@echo "✓ Lint passed"
+
+tidy:
+	$(GO) mod tidy
+	@echo "✓ Tidied"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DOCKER TESTING
+# ═══════════════════════════════════════════════════════════════════════════
+
+docker-test:
+	@mkdir -p $(COVERAGE_DIR)
+	docker buildx build \
+		--build-arg COVERAGE_EXCLUDE="$(COVERAGE_EXCLUDE)" \
+		--build-arg COVERPKG="$(COVERPKG)" \
+		--target test \
+		--cache-from=$(CACHE_FROM) \
+		--cache-to=$(CACHE_TO) \
+		--output type=local,dest=$(COVERAGE_DIR) .
+	@if [ -f $(COVERAGE_DIR)/coverage.out ]; then \
+		total=$$($(GO) tool cover -func=$(COVERAGE_DIR)/coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
+		echo "Coverage: $$total%"; \
+		if [ $$(echo "$$total < $(COVERAGE_THRESHOLD)" | bc -l) -eq 1 ]; then \
+			echo "FAIL: Below $(COVERAGE_THRESHOLD)% threshold"; exit 1; \
+		fi; \
+	else \
+		echo "FAIL: coverage.out not found"; exit 1; \
+	fi
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SONARCLOUD CODE QUALITY
+# ═══════════════════════════════════════════════════════════════════════════
+
+docker-sonar:
+	@[ -n "$(SONAR_TOKEN)" ] || (echo "Error: SONAR_TOKEN not set"; exit 1)
+	@docker pull --quiet sonarsource/sonar-scanner-cli:11 || true
+	docker run --rm \
+		-e SONAR_TOKEN=$(SONAR_TOKEN) \
+		-e SONAR_HOST_URL=https://sonarcloud.io \
+		-v "$(PWD):/usr/src" \
+		sonarsource/sonar-scanner-cli:11 \
+		-Dsonar.organization="huypham67" \
+		-Dsonar.projectKey="huypham67_bookmark-common" \
+		-Dsonar.projectName="$(APP_NAME)" \
+		-Dsonar.projectVersion="1.0" \
+		-Dsonar.sources="." \
+		-Dsonar.tests="." \
+		-Dsonar.test.inclusions="**/*_test.go" \
+		-Dsonar.test.exclusions="**/vendor/**,**/mocks/**" \
+		-Dsonar.exclusions="$(SONAR_EXCLUDE_PATTERNS)" \
+		-Dsonar.coverage.exclusions="$(SONAR_COVERAGE_EXCLUSIONS)" \
+		-Dsonar.go.coverage.reportPaths="$(COVERAGE_DIR)/coverage.out" \
+		-Dsonar.qualitygate.wait=true
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CLEANUP
+# ═══════════════════════════════════════════════════════════════════════════
+
+clean:
+	rm -rf $(BIN_DIR) $(COVERAGE_DIR)
+	@echo "✓ Cleaned"

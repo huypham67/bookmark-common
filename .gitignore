@@ -1,0 +1,41 @@
+# Build outputs
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# IDE
+.idea/
+*.iwb
+*.iws
+.vscode/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Dependencies
+vendor/
+
+# Test & Coverage
+*.log
+coverage.txt
+*.out
+*.test
+coverage/
+coverage.html
+coverage.tmp
+coverage_report/
+
+# Keys
+*.pem
+
+# Local configs
+CLAUDE.md
+
+# OS
+.DS_Store
+Thumbs.db
