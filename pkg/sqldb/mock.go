@@ -1,0 +1,23 @@
+package sqldb
+
+import (
+	"testing"
+
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+)
+
+// NewMock creates an in-memory SQLite database for testing purposes.
+func NewMock(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("Failed to create mock SQLite database: %v", err)
+	}
+
+	return db
+}
