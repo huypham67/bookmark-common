@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "main"
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  pull_request:
+    branches:
+      - "main"
+
+env:
+  REGISTRY: docker.io
+  COVERAGE_THRESHOLD: 80
+  CACHE_FROM: type=gha
+  CACHE_TO: type=gha,mode=max
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v3
+
+      - name: Run isolation tests and check coverage
+        run: make docker-test
+        env:
+          CACHE_FROM: ${{ env.CACHE_FROM }}
+          CACHE_TO: ${{ env.CACHE_TO }}
+          COVERAGE_THRESHOLD: ${{ env.COVERAGE_THRESHOLD }}
+
+      - name: SonarCloud Code Analysis & SAST Scan
+        run: make docker-sonar
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
