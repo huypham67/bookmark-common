@@ -8,7 +8,7 @@ type Config struct {
 	Port     string `envconfig:"DB_PORT" default:"5432"`
 	User     string `envconfig:"DB_USER" default:"admin"`
 	Password string `envconfig:"DB_PASSWORD" default:"admin"`
-	Database string `envconfig:"DB_NAME" default:"bookmark_db"`
+	Database string `envconfig:"DB_NAME" default:"postgres"`
 	SSLMode  string `envconfig:"DB_SSLMODE" default:"disable"`
 	TimeZone string `envconfig:"DB_TIMEZONE" default:"UTC"`
 }

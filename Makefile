@@ -51,7 +51,7 @@ DOCKER_NAMESPACE ?= huypham053
 DOCKER_IMAGE := $(DOCKER_REGISTRY)/$(DOCKER_NAMESPACE)/$(APP_NAME)
 
 .PHONY: help test test-coverage fmt vet lint tidy clean \
-        docker-test docker-sonar
+        docker-test docker-sonar gen-keys
 
 help:
 	@echo "bookmark-common - Shared Library"
@@ -63,6 +63,7 @@ help:
 	@echo "  make vet           Static analysis (go vet)"
 	@echo "  make lint          Run linter"
 	@echo "  make tidy          Tidy dependencies"
+	@echo "  make gen-keys      Generate JWT RSA key pair"
 	@echo ""
 	@echo "Docker / CI:"
 	@echo "  make docker-test   Test in Docker with coverage extraction"
@@ -153,6 +154,21 @@ docker-sonar:
 		-Dsonar.coverage.exclusions="$(SONAR_COVERAGE_EXCLUSIONS)" \
 		-Dsonar.go.coverage.reportPaths="$(COVERAGE_DIR)/coverage.out" \
 		-Dsonar.qualitygate.wait=true
+
+# ═══════════════════════════════════════════════════════════════════════════
+# KEYS
+# ═══════════════════════════════════════════════════════════════════════════
+
+gen-keys:
+	@mkdir -p keys
+	@if [ -f keys/private.pem ] && [ -f keys/public.pem ]; then \
+		echo "✓ Keys already exist"; \
+	else \
+		echo "Generating RSA key pair..."; \
+		openssl genrsa -out keys/private.pem 2048 2>/dev/null; \
+		openssl rsa -in keys/private.pem -pubout -out keys/public.pem 2>/dev/null; \
+		echo "✓ Keys generated: keys/private.pem, keys/public.pem"; \
+	fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 # CLEANUP
