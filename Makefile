@@ -1,20 +1,68 @@
-# Makefile for bookmark-common (Shared Library)
-# Structure: Y CHANG MONO - Same approach as bookmark-service-monolithic
+# Makefile for Bookmark Common (Shared Library)
 
-APP_NAME := bookmark-common
-BIN_DIR := ./bin
-COVERAGE_DIR ?= coverage_report
+# =============================================================================
+# LIBRARY METADATA
+# =============================================================================
+
+APP_NAME    := bookmark-common
+MAIN_PKG    := github.com/huypham67/bookmark-common
+
+# =============================================================================
+# COVERAGE & QUALITY GATES
+# =============================================================================
+
+COVERAGE_DIR       ?= coverage_report
 COVERAGE_THRESHOLD ?= 80
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SINGLE SOURCE OF TRUTH: Coverage & Quality Gate Exclusions
 #
-# INFRA_DIRS: exclude from coverage % but SCAN for security
-INFRA_DIRS := pkg/common pkg/dbutils pkg/jwt/provider pkg/logger pkg/redis \
-              pkg/requestutils pkg/response pkg/security pkg/sqldb pkg/utils \
-              pkg/ratelimit/provider
+# Strategy:
+#   1. SYSTEM_DIRS/FILES: Completely excluded (no scan, no coverage)
+#      → Auto-generated, vendored, test infrastructure
+#      → Used for sonar.exclusions + local coverage filter
+#
+#   2. INFRA_DIRS / INFRA_FILES: Exclude from coverage % but INCLUDE in scan
+#      → Infrastructure/setup code (DI, config, adapters)
+#      → INFRA_DIRS: whole packages excluded from coverage threshold.
+#        Pure adapters/wiring with no testable logic, e.g. pkg/logger,
+#        pkg/redis, pkg/sqldb, pkg/jwt/provider, pkg/ratelimit/provider
+#        (env load, key file I/O, DI).
+#      → INFRA_FILES: surgical per-file exclusion for packages that mix
+#        tested logic with wiring/setup. Currently empty — packages are
+#        split so each is wholly one category (see pkg/jwt vs pkg/jwt/provider).
+#      → Both are still scanned for security vulnerabilities (SonarQube)
+#
+#   3. Everything else = business logic → MUST be covered:
+#      pkg/base62, pkg/shortcode, pkg/jwt (generator, validator, claims),
+#      pkg/ratelimit, middleware
+#
+# Usage:
+#   - make test        → filters coverage.out to exclude infrastructure + system
+#   - make docker-test → passes COVERAGE_EXCLUDE to Docker build
+#   - make docker-sonar → sonar.exclusions (system only)
+#                        sonar.coverage.exclusions (system + infra)
+# ═══════════════════════════════════════════════════════════════════════════
 
-# SYSTEM_DIRS: no scan, no coverage
+# Infrastructure dirs: exclude from coverage % but SCAN for security
+INFRA_DIRS := \
+	pkg/common \
+	pkg/dbutils \
+	pkg/jwt/provider \
+	pkg/ratelimit/provider \
+	pkg/logger \
+	pkg/redis \
+	pkg/requestutils \
+	pkg/response \
+	pkg/security \
+	pkg/sqldb \
+	pkg/utils
+
+# Infrastructure files: surgical per-file coverage exclusion (still SCANNED).
+# For packages that mix tested logic with wiring/setup.
+INFRA_FILES :=
+
+# System artifacts: auto-generated, vendored, test infrastructure (NO SCAN)
 SYSTEM_DIRS := vendor docs bin mocks
 SYSTEM_FILES := _test.go .pb.go test_helper.go mock.go
 
@@ -24,55 +72,100 @@ space := $(subst ,, )
 
 # Pattern builders for Sonar (Ant-style glob)
 SONAR_INFRA_DIRS := $(foreach d,$(INFRA_DIRS),**/$(d)**)
+SONAR_INFRA_FILES := $(foreach f,$(INFRA_FILES),**/$(f))
 SONAR_SYSTEM_DIRS := $(foreach d,$(SYSTEM_DIRS),**/$(d)**)
 SONAR_SYSTEM_FILES := $(foreach f,$(SYSTEM_FILES),**/*$(f))
 
-# Sonar: exclude system artifacts completely
+# Sonar: exclude system artifacts completely (INFRA_FILES intentionally absent → still scanned)
 SONAR_EXCLUDE_PATTERNS := $(subst $(space),$(comma),$(strip $(SONAR_SYSTEM_FILES) $(SONAR_SYSTEM_DIRS) $(COVERAGE_DIR)/**))
 
-# Sonar: exclude infrastructure from coverage % but allow security scan
-SONAR_INFRA_DIRS_FLAT := $(foreach d,$(INFRA_DIRS),**/$(d)**)
-SONAR_COVERAGE_EXCLUSIONS := $(subst $(space),$(comma),$(strip $(SONAR_INFRA_DIRS_FLAT) $(SONAR_SYSTEM_DIRS)))
+# Sonar: exclude infrastructure (dirs + files) from coverage % but allow security scan
+SONAR_COVERAGE_EXCLUSIONS := $(subst $(space),$(comma),$(strip $(SONAR_INFRA_DIRS) $(SONAR_INFRA_FILES) $(SONAR_SYSTEM_DIRS)))
 
 # Local/Docker: Regex format (coverage.out filtering)
 ALL_EXCLUDES := $(INFRA_DIRS) $(INFRA_FILES) $(SYSTEM_DIRS) $(SYSTEM_FILES)
 COVERAGE_EXCLUDE := $(subst $(space),|,$(strip $(ALL_EXCLUDES)))
 
-GO := go
+# Go test: Scan all, let grep filter
 COVERPKG := ./...
 
-# Build cache
-CACHE_FROM ?= type=local,src=/tmp/.buildx-cache
-CACHE_TO ?= type=local,dest=/tmp/.buildx-cache-new,mode=max
+# =============================================================================
+# GO COMPILER
+# =============================================================================
 
-# Docker
+GO      := go
+GOLINT  := golangci-lint
+
+# =============================================================================
+# DOCKER
+# =============================================================================
+
 DOCKER_REGISTRY ?= docker.io
 DOCKER_NAMESPACE ?= huypham053
 DOCKER_IMAGE := $(DOCKER_REGISTRY)/$(DOCKER_NAMESPACE)/$(APP_NAME)
 
-.PHONY: help test test-coverage fmt vet lint tidy clean \
-        docker-test docker-sonar gen-keys
+CACHE_FROM ?= type=local,src=/tmp/.buildx-cache
+CACHE_TO ?= type=local,dest=/tmp/.buildx-cache-new,mode=max
+
+# =============================================================================
+# MACROS
+# =============================================================================
+
+.DEFAULT_GOAL := help
+
+# =============================================================================
+# DEVELOPMENT
+# =============================================================================
+
+.PHONY: help fmt vet lint tidy vendor
 
 help:
-	@echo "bookmark-common - Shared Library"
+	@echo "Development:"
+	@echo "  make fmt             Format code"
+	@echo "  make vet             Static analysis"
+	@echo "  make lint            Linter"
+	@echo "  make tidy            Dependencies"
+	@echo "  make vendor          Vendor dependencies"
 	@echo ""
-	@echo "Local Development:"
-	@echo "  make test          Run tests + coverage report (80% threshold)"
-	@echo "  make test-coverage Open coverage HTML"
-	@echo "  make fmt           Format code (go fmt)"
-	@echo "  make vet           Static analysis (go vet)"
-	@echo "  make lint          Run linter"
-	@echo "  make tidy          Tidy dependencies"
-	@echo "  make gen-keys      Generate JWT RSA key pair"
+	@echo "Testing:"
+	@echo "  make test            Local tests + coverage report"
+	@echo "  make test-coverage   Open coverage HTML"
+	@echo ""
+	@echo "Mocks:"
+	@echo "  make generate-mocks  Generate all mocks"
+	@echo "  make clean-mocks     Clean all mocks"
 	@echo ""
 	@echo "Docker / CI:"
-	@echo "  make docker-test   Test in Docker with coverage extraction"
-	@echo "  make docker-sonar  SonarCloud code quality scan"
-	@echo "  make clean         Remove artifacts"
+	@echo "  make docker-test     Test in container"
+	@echo "  make docker-sonar    SonarCloud scan"
+	@echo ""
+	@echo "Utilities:"
+	@echo "  make install-tools   Install dev tooling"
+	@echo "  make info            Show library info"
+	@echo "  make clean           Remove artifacts"
 
-# ═══════════════════════════════════════════════════════════════════════════
-# LOCAL TESTING
-# ═══════════════════════════════════════════════════════════════════════════
+fmt:
+	$(GO) fmt ./...
+
+vet:
+	$(GO) vet ./...
+
+lint:
+	@which $(GOLINT) > /dev/null || (echo "Error: golangci-lint not found. Run: make install-tools"; exit 1)
+	$(GOLINT) run ./...
+
+tidy:
+	$(GO) mod tidy
+
+vendor:
+	$(GO) mod download
+	$(GO) mod vendor
+
+# =============================================================================
+# TESTING
+# =============================================================================
+
+.PHONY: test test-coverage
 
 test:
 	@$(GO) clean -testcache
@@ -90,26 +183,11 @@ test:
 test-coverage: test
 	$(GO) tool cover -html=$(COVERAGE_DIR)/coverage.out
 
-fmt:
-	$(GO) fmt ./...
-	@echo "✓ Formatted"
+# =============================================================================
+# CI / CD
+# =============================================================================
 
-vet:
-	$(GO) vet ./...
-	@echo "✓ Vet passed"
-
-lint:
-	@which golangci-lint > /dev/null || (echo "Error: golangci-lint not found"; exit 1)
-	golangci-lint run ./...
-	@echo "✓ Lint passed"
-
-tidy:
-	$(GO) mod tidy
-	@echo "✓ Tidied"
-
-# ═══════════════════════════════════════════════════════════════════════════
-# DOCKER TESTING
-# ═══════════════════════════════════════════════════════════════════════════
+.PHONY: docker-test docker-sonar
 
 docker-test:
 	@mkdir -p $(COVERAGE_DIR)
@@ -129,10 +207,6 @@ docker-test:
 	else \
 		echo "FAIL: coverage.out not found"; exit 1; \
 	fi
-
-# ═══════════════════════════════════════════════════════════════════════════
-# SONARCLOUD CODE QUALITY
-# ═══════════════════════════════════════════════════════════════════════════
 
 docker-sonar:
 	@[ -n "$(SONAR_TOKEN)" ] || (echo "Error: SONAR_TOKEN not set"; exit 1)
@@ -155,25 +229,39 @@ docker-sonar:
 		-Dsonar.go.coverage.reportPaths="$(COVERAGE_DIR)/coverage.out" \
 		-Dsonar.qualitygate.wait=true
 
-# ═══════════════════════════════════════════════════════════════════════════
-# KEYS
-# ═══════════════════════════════════════════════════════════════════════════
+# =============================================================================
+# MOCKS
+# =============================================================================
 
-gen-keys:
-	@mkdir -p keys
-	@if [ -f keys/private.pem ] && [ -f keys/public.pem ]; then \
-		echo "✓ Keys already exist"; \
-	else \
-		echo "Generating RSA key pair..."; \
-		openssl genrsa -out keys/private.pem 2048 2>/dev/null; \
-		openssl rsa -in keys/private.pem -pubout -out keys/public.pem 2>/dev/null; \
-		echo "✓ Keys generated: keys/private.pem, keys/public.pem"; \
-	fi
+.PHONY: generate-mocks clean-mocks
 
-# ═══════════════════════════════════════════════════════════════════════════
-# CLEANUP
-# ═══════════════════════════════════════════════════════════════════════════
+generate-mocks:
+	@echo "Generating mocks for jwt..."
+	cd pkg/jwt && $(GO) generate
+	@echo "Generating mocks for ratelimit..."
+	cd pkg/ratelimit && $(GO) generate
+	@echo "✓ Mocks generated successfully"
+
+clean-mocks:
+	@echo "Cleaning mocks..."
+	rm -rf pkg/jwt/mocks
+	rm -rf pkg/ratelimit/mocks
+	@echo "✓ Mocks cleaned"
+
+# =============================================================================
+# UTILITIES
+# =============================================================================
+
+.PHONY: install-tools info clean
+
+install-tools:
+	$(GO) install github.com/vektra/mockery/v2@latest
+	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+info:
+	@echo "Library:   $(APP_NAME)"
+	@echo "Module:    $(MAIN_PKG)"
+	@echo "Go:        $$($(GO) version)"
 
 clean:
-	rm -rf $(BIN_DIR) $(COVERAGE_DIR)
-	@echo "✓ Cleaned"
+	rm -rf $(COVERAGE_DIR)

@@ -9,7 +9,7 @@ import (
 
 // TokenGenerator defines the contract for JWT token generation operations.
 //
-//go:generate mockery --name=TokenGenerator --dir=pkg/jwt --output=pkg/jwt/mocks --filename=generator.go
+//go:generate mockery --name=TokenGenerator --output=./mocks --outpkg=mocks --filename=generator.go
 type TokenGenerator interface {
 	GenerateToken(userID, displayName, email string) (string, error)
 }
