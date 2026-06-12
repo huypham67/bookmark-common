@@ -50,7 +50,7 @@ go mod tidy
 | `pkg/common` | Shared error definitions/types |
 | `pkg/dbutils` | GORM/SQL error mapping helpers |
 | `pkg/jwt` | RSA token generator, validator, claims + `GetUserIDFromContext` helper |
-| `pkg/jwt/provider` | Loads RSA keys + config and wires the JWT generator/validator (DI) |
+| `pkg/jwt/provider` | Role-pure constructors from env: `NewIssuer` (private key → generator) and `NewValidator` (public-key-only → validator). `IssuerConfig`/`VerifierConfig` embed a shared `CommonConfig` (issuer, audience); the verifier config has no private-key field |
 | `pkg/logger` | Global Zerolog configuration |
 | `pkg/ratelimit` | `Limiter`/`Store` interfaces + Redis-backed implementation |
 | `pkg/ratelimit/provider` | Builds a `Limiter` from a Redis client + config (DI) |
@@ -79,15 +79,16 @@ import (
     "github.com/huypham67/bookmark-common/pkg/jwt"
 )
 
-// Bootstrap: loads RSA keys + JWT config from env (e.g. AUTH_*).
-provider, err := jwtprovider.New("AUTH")
-if err != nil { /* handle */ }
+// Role-pure constructors (each loads JWT config from env, e.g. AUTH_*):
 
-// Protect routes:
-router.Use(middleware.JWTAuth(provider.Validator()))
+// Token authority / issuer (e.g. user-service) — signs with the PRIVATE key.
+generator, err := jwtprovider.NewIssuer("AUTH")
+token, err := generator.GenerateToken(userID, displayName, email)
 
-// Issue tokens:
-token, err := provider.Generator().GenerateToken(userID, displayName, email)
+// Relying party / resource server (e.g. bookmark-service) — loads only the
+// PUBLIC key, so it never has access to the signing key.
+validator, err := jwtprovider.NewValidator("AUTH")
+router.Use(middleware.JWTAuth(validator))
 
 // Inside a handler:
 userID, err := jwt.GetUserIDFromContext(c)

@@ -6,20 +6,11 @@ import (
 	"github.com/huypham67/bookmark-common/pkg/jwt"
 )
 
-// Provider encapsulates JWT token generation and validation capabilities.
-type Provider interface {
-	Generator() jwt.TokenGenerator
-	Validator() jwt.TokenValidator
-}
-
-type jwtProvider struct {
-	generator jwt.TokenGenerator
-	validator jwt.TokenValidator
-}
-
-// New initializes a new JWT provider from environment configuration.
-func New(envPrefix string) (Provider, error) {
-	cfg, err := LoadConfig(envPrefix)
+// NewIssuer initializes a JWT token generator from environment configuration.
+// The issuer signs tokens with the RSA private key, so only the token authority
+// (e.g. user-service) should construct one.
+func NewIssuer(envPrefix string) (jwt.TokenGenerator, error) {
+	cfg, err := LoadIssuerConfig(envPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load jwt config: %w", err)
 	}
@@ -28,10 +19,30 @@ func New(envPrefix string) (Provider, error) {
 		return nil, fmt.Errorf("invalid jwt config: %w", err)
 	}
 
-	// Load RSA keys from configured paths
 	privateKey, err := LoadRSAPrivateKeyFromFile(cfg.PrivateKeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load private key: %w", err)
+	}
+
+	generator, err := jwt.NewTokenGenerator(privateKey, cfg.Issuer, cfg.Audience, cfg.ExpirationDuration())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create token generator: %w", err)
+	}
+
+	return generator, nil
+}
+
+// NewValidator initializes a JWT token validator from environment configuration.
+// It loads ONLY the RSA public key, so relying parties (resource servers such as
+// bookmark-service) never need access to the signing private key.
+func NewValidator(envPrefix string) (jwt.TokenValidator, error) {
+	cfg, err := LoadVerifierConfig(envPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load jwt config: %w", err)
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid jwt config: %w", err)
 	}
 
 	publicKey, err := LoadRSAPublicKeyFromFile(cfg.PublicKeyPath)
@@ -39,30 +50,10 @@ func New(envPrefix string) (Provider, error) {
 		return nil, fmt.Errorf("failed to load public key: %w", err)
 	}
 
-	// Create TokenGenerator
-	generator, err := jwt.NewTokenGenerator(privateKey, cfg.Issuer, cfg.Audience, cfg.ExpirationDuration())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create token generator: %w", err)
-	}
-
-	// Create TokenValidator
 	validator, err := jwt.NewTokenValidator(publicKey, cfg.Issuer, cfg.Audience)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token validator: %w", err)
 	}
 
-	return &jwtProvider{
-		generator: generator,
-		validator: validator,
-	}, nil
-}
-
-// Generator returns the TokenGenerator instance from the provider.
-func (p *jwtProvider) Generator() jwt.TokenGenerator {
-	return p.generator
-}
-
-// Validator returns the TokenValidator instance from the provider.
-func (p *jwtProvider) Validator() jwt.TokenValidator {
-	return p.validator
+	return validator, nil
 }
