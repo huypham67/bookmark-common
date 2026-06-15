@@ -9,6 +9,10 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
+var (
+	validate = validator.New(validator.WithRequiredStructEnabled())
+)
+
 // Bind extracts and binds data from multiple sources (URI, JSON, Query, Header),
 // then validates using `validate` struct tags.
 //
@@ -57,8 +61,7 @@ func Bind[T any](c *gin.Context) (*T, error) {
 	}
 
 	// Step 5: Validate using `validate` tags (AFTER ALL sources are bound)
-	v := validator.New()
-	if err := v.Struct(req); err != nil {
+	if err := validate.Struct(req); err != nil {
 		return nil, err
 	}
 
