@@ -7,10 +7,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/huypham67/bookmark-common/pkg/jwt"
 	"github.com/huypham67/bookmark-common/pkg/ratelimit"
+	"github.com/newrelic/go-agent/v3/newrelic"
 	"github.com/rs/zerolog/log"
 )
 
-const rateLimitKeyPrefix = "ratelimit:"
+const (
+	rateLimitKeyPrefix      = "ratelimit:"
+	eventRateLimitExceeded  = "RateLimitExceeded"
+	metricRateLimitExceeded = "Custom/RateLimit/Exceeded"
+)
 
 // RateLimit returns a Gin middleware that enforces the limiter's policy per caller.
 func RateLimit(limiter ratelimit.Limiter) gin.HandlerFunc {
@@ -27,6 +32,12 @@ func RateLimit(limiter ratelimit.Limiter) gin.HandlerFunc {
 
 		if !allowed {
 			log.Warn().Str("key", key).Msg("rate limit exceeded")
+			app := newrelic.FromContext(c).Application()
+			app.RecordCustomMetric(metricRateLimitExceeded, 1)
+			app.RecordCustomEvent(eventRateLimitExceeded, map[string]interface{}{
+				"identifier": rateLimitIdentifier(c),
+				"path":       c.FullPath(),
+			})
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"error": "rate limit exceeded",
 			})
