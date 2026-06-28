@@ -27,7 +27,8 @@ COVERAGE_THRESHOLD ?= 80
 #      → INFRA_DIRS: whole packages excluded from coverage threshold.
 #        Pure adapters/wiring with no testable logic, e.g. pkg/logger,
 #        pkg/redis, pkg/sqldb, pkg/jwt/provider, pkg/ratelimit/provider
-#        (env load, key file I/O, DI).
+#        (env load, key file I/O, DI), pkg/tracing (NR app init + NR
+#        API adapters: Extract/Continue).
 #      → INFRA_FILES: surgical per-file exclusion for packages that mix
 #        tested logic with wiring/setup. Currently empty — packages are
 #        split so each is wholly one category (see pkg/jwt vs pkg/jwt/provider).
@@ -56,6 +57,7 @@ INFRA_DIRS := \
 	pkg/response \
 	pkg/security \
 	pkg/sqldb \
+	pkg/tracing \
 	pkg/utils
 
 # Infrastructure files: surgical per-file coverage exclusion (still SCANNED).
